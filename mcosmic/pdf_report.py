@@ -103,11 +103,34 @@ def _register_font() -> str:
     )
 
 
+def _configure_kaleido_runtime() -> None:
+    """Kaleido 1.x: Chromium utvonal Linuxon (pl. Streamlit Cloud)."""
+    import shutil
+
+    for binary in ("chromium", "chromium-browser", "google-chrome", "chrome"):
+        path = shutil.which(binary)
+        if path:
+            os.environ.setdefault("CHROMIUM_PATH", path)
+            os.environ.setdefault("GOOGLE_CHROME_SHIM", path)
+            break
+
+
 def _fig_to_image(fig: go.Figure, width: int = 900, height: int = 500) -> io.BytesIO:
     import plotly.io as pio
 
+    _configure_kaleido_runtime()
     buf = io.BytesIO()
-    pio.write_image(fig, buf, format="png", width=width, height=height, scale=2)
+    try:
+        pio.write_image(fig, buf, format="png", width=width, height=height, scale=2)
+    except Exception as exc:
+        msg = str(exc).lower()
+        if "chrome" in msg or "kaleido" in msg:
+            raise RuntimeError(
+                "A diagramok PNG exportjahoz kaleido 0.2.1 kell (Chrome nelkul), "
+                "vagy Chromium a szerveren. "
+                "Telepites: pip install kaleido==0.2.1"
+            ) from exc
+        raise
     buf.seek(0)
     return buf
 
