@@ -1,0 +1,38 @@
+kontextus:
+  1: Szabadidő
+  2: tanulás
+  3: étkezés
+  4: egyéb
+partner:
+  1: tanár / ped.asszisztens
+  2: más felnőtt / kutató
+  3: kortárs
+  4: csoport
+funkcio:
+  1: 'kérés: tárgy, tevékenység, segítség'
+  2: elutasítás /tiltakozás
+  3: egyetértés, beleegyezés
+  4: szociális rutin kérése
+  5: megosztás, figyelemfelhívás
+  6: visszaigazolás
+  7: megjegyzés, komment
+  8: információkérés / tisztázás, pontosít
+szerep:
+  1: kezdeményezés
+  2: válasz
+  3: helyes válasz
+  4: felesleges / helytelen válasz
+  5: nem interaktív / nincs válasz
+  6: passzív teljesítés
+forma:
+  1: vokalizáció
+  2: egyszavas kifejezése
+  3: kétszavas mondat
+  4: AAK, kép, szimbólum
+  5: gesztus / mutatás
+  6: cselekvés
+  7: szemkontaktus
+  8: tekintetváltás
+  9: tekintet / mutatás követése
+  10: megmutat, odaad
+  11: jelelés

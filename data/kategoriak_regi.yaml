@@ -1,0 +1,29 @@
+kontextus:
+  1: Strukturált tevékenység (ACT)
+  2: Szabad játék (FP)
+partner:
+  1: Tanár / tanítási asszisztens
+  2: Másik felnőtt
+  3: Társ (gyermek)
+  4: Egész csoport
+szerep:
+  1: Kezdeményezés
+  2: Válasz
+  3: Nem interaktív / nincs válasz
+funkcio:
+  1: Tárgy/cselekvés kérése
+  2: Tiltakozás / megtagadás
+  3: Engedékenység / enged
+  4: Felhívás / figyelemfelkeltés
+  5: Elismerés
+  6: Megosztott figyelem / kommentár
+  7: Információ kérése
+forma:
+  1: Hangadás / egy szó
+  2: Mondat (2+ szó)
+  3: Gesztus / mutatás
+  4: Cselekvés
+  5: Szemkontaktus
+  6: Tekintetváltás
+  7: Tekintet / mutatás követése
+  8: Mutatás / odaadás
