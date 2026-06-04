@@ -67,26 +67,39 @@ _FONT_NAME = "MCosmicFont"
 _FONT_REGISTERED = False
 
 
+def _font_candidates() -> list[Path]:
+    """Betutipus-kereses: csomagolt font eloszor (Streamlit Cloud / Linux)."""
+    package_dir = Path(__file__).resolve().parent
+    bundled = package_dir / "fonts"
+    return [
+        bundled / "NotoSans-Regular.ttf",
+        bundled / "DejaVuSans.ttf",
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
+        Path("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"),
+        Path("/usr/share/fonts/opentype/noto/NotoSans-Regular.ttf"),
+        Path(os.environ.get("WINDIR", "")) / "Fonts" / "arial.ttf",
+        Path(os.environ.get("WINDIR", "")) / "Fonts" / "calibri.ttf",
+        Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+        Path("/Library/Fonts/Arial.ttf"),
+    ]
+
+
 def _register_font() -> str:
     global _FONT_REGISTERED
     if _FONT_REGISTERED:
         return _FONT_NAME
 
-    candidates = [
-        Path(os.environ.get("WINDIR", "")) / "Fonts" / "arial.ttf",
-        Path(os.environ.get("WINDIR", "")) / "Fonts" / "calibri.ttf",
-        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
-        Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
-        Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
-    ]
-    for path in candidates:
+    for path in _font_candidates():
         if path.is_file():
             pdfmetrics.registerFont(TTFont(_FONT_NAME, str(path)))
             _FONT_REGISTERED = True
             return _FONT_NAME
 
     raise RuntimeError(
-        "Nem talalhato TTF betutipus a PDF-hez (pl. Arial Windows alatt)."
+        "Nem talalhato TTF betutipus a PDF-hez. "
+        "Ellenorizd, hogy a mcosmic/fonts/NotoSans-Regular.ttf megvan a repoban."
     )
 
 
