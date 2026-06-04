@@ -8,6 +8,7 @@ PDF_REPORT_VERSION = 2
 
 import io
 import os
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     Image,
+    KeepTogether,
     PageBreak,
     Paragraph,
     SimpleDocTemplate,
@@ -103,8 +105,20 @@ def _register_font() -> str:
     )
 
 
+def _kaleido_version() -> tuple[int, str] | None:
+    try:
+        import kaleido
+
+        ver = str(getattr(kaleido, "__version__", "0"))
+        return int(ver.split(".")[0]), ver
+    except ImportError:
+        return None
+
+
 def _configure_kaleido_runtime() -> None:
-    """Kaleido 1.x: Chromium utvonal Linuxon (pl. Streamlit Cloud)."""
+    """Kaleido 1.x: Chromium utvonal (Linux / ha Chrome telepitve)."""
+    if _kaleido_version() is None or _kaleido_version()[0] != 1:
+        return
     import shutil
 
     for binary in ("chromium", "chromium-browser", "google-chrome", "chrome"):
@@ -115,48 +129,202 @@ def _configure_kaleido_runtime() -> None:
             break
 
 
+def _ensure_kaleido_ready() -> None:
+    info = _kaleido_version()
+    if info is None:
+        raise RuntimeError(
+            "Hianyzik a kaleido csomag. Telepites a projekt mappaban:\n"
+            "  pip install -r requirements.txt"
+        )
+    major, ver = info
+    if major >= 1:
+        raise RuntimeError(
+            f"A telepitett kaleido ({ver}) Google Chrome-ot igenyel. "
+            "Hasznalj helyette: pip install kaleido==0.2.1"
+        )
+
+
 def _fig_to_image(fig: go.Figure, width: int = 900, height: int = 500) -> io.BytesIO:
     import plotly.io as pio
 
+    _ensure_kaleido_ready()
     _configure_kaleido_runtime()
     buf = io.BytesIO()
-    try:
-        pio.write_image(fig, buf, format="png", width=width, height=height, scale=2)
-    except Exception as exc:
-        msg = str(exc).lower()
-        if "chrome" in msg or "kaleido" in msg:
-            raise RuntimeError(
-                "A diagramok PNG exportjahoz kaleido 0.2.1 kell (Chrome nelkul), "
-                "vagy Chromium a szerveren. "
-                "Telepites: pip install kaleido==0.2.1"
-            ) from exc
-        raise
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        try:
+            pio.write_image(fig, buf, format="png", width=width, height=height, scale=2)
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "chrome" in msg or "chromium" in msg or "plotly_get_chrome" in msg:
+                raise RuntimeError(
+                    "A diagramok PNG exportjahoz kaleido 0.2.1 kell (Chrome nelkul). "
+                    "Telepites: pip install kaleido==0.2.1"
+                ) from exc
+            raise RuntimeError(f"Diagram export hiba: {exc}") from exc
     buf.seek(0)
     return buf
+
+
+def _escape_xml(text: str) -> str:
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
 
 
 def _df_to_table(
     df: pd.DataFrame,
     font_name: str,
+    page_width: float | None = None,
     col_widths: list[float] | None = None,
+    font_size: int = 8,
 ) -> Table:
-    header = [str(c) for c in df.columns]
-    rows = [[str(v) for v in row] for row in df.values.tolist()]
-    data = [header] + rows
+    """Táblázat; page_width megadásakor oszlopok az oldal szélességéhez igazítva."""
+    n_cols = len(df.columns)
+    if n_cols == 0:
+        return Table([[]])
+
+    if col_widths is None and page_width is not None:
+        if n_cols == 1:
+            col_widths = [page_width]
+        else:
+            first_ratio = 0.28 if n_cols > 5 else 0.32
+            first_w = page_width * first_ratio
+            rest_w = (page_width - first_w) / (n_cols - 1)
+            col_widths = [first_w] + [rest_w] * (n_cols - 1)
+        if n_cols > 6:
+            font_size = 6
+        elif n_cols > 4:
+            font_size = 7
+
+    header_style = ParagraphStyle(
+        "TblHead",
+        fontName=font_name,
+        fontSize=font_size,
+        leading=font_size + 2,
+        textColor=colors.white,
+    )
+    cell_style = ParagraphStyle(
+        "TblCell",
+        fontName=font_name,
+        fontSize=font_size,
+        leading=font_size + 2,
+    )
+
+    def _cell(text: object, *, header: bool = False) -> Paragraph:
+        style = header_style if header else cell_style
+        return Paragraph(_escape_xml(text), style)
+
+    data = [[_cell(c, header=True) for c in df.columns]]
+    for row in df.values.tolist():
+        data.append([_cell(v) for v in row])
+
     table = Table(data, colWidths=col_widths, repeatRows=1)
     table.setStyle(
         TableStyle(
             [
-                ("FONT", (0, 0), (-1, -1), font_name, 8),
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4472C4")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F2F2F2")]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 2),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
             ]
         )
     )
     return table
+
+
+def _add_block(story: list[Any], flowables: list[Any]) -> None:
+    """Cím + ábra/táblázat egy oldalon maradjon."""
+    story.append(KeepTogether(flowables))
+
+
+def _clone_figure(fig: go.Figure) -> go.Figure:
+    return go.Figure(fig.to_dict())
+
+
+def _prepare_heatmap_for_pdf(fig: go.Figure) -> go.Figure:
+    """Hoterkep: extra margok PDF exportra (dolt x feliratok eleje)."""
+    out = _clone_figure(fig)
+    if not out.data:
+        return out
+
+    x_labels = list(out.data[0].x) if out.data[0].x is not None else []
+    y_labels = list(out.data[0].y) if out.data[0].y is not None else []
+    max_x_len = max((len(str(x)) for x in x_labels), default=10)
+    max_y_len = max((len(str(y)) for y in y_labels), default=10)
+    n_cols = max(len(x_labels), 1)
+    n_rows = max(len(y_labels), 1)
+
+    bottom = int(max(220, min(400, 130 + 10 * max_x_len)))
+    left = int(max(200, min(320, 130 + 7 * max_y_len)))
+    right = int(max(out.layout.margin.r or 40, 110))
+    top = int(out.layout.margin.t or 72)
+    export_w = max(1000, 56 * n_cols + left + right + 60)
+    export_h = max(int(out.layout.height or 360), 52 * n_rows + top + bottom)
+
+    out.update_layout(
+        width=export_w,
+        height=export_h,
+        margin=dict(l=left, r=right, t=top, b=bottom),
+        xaxis=dict(
+            title="Funkci\u00f3",
+            tickangle=-35,
+            automargin=True,
+        ),
+        yaxis=dict(title="Kontextus", autorange="reversed", automargin=True),
+    )
+    return out
+
+
+def _prepare_horizontal_bar_for_pdf(fig: go.Figure) -> go.Figure:
+    """Vizszintes savdiagram: bal margó, hogy a kategórianevek látszódjanak a PDF-ben."""
+    out = _clone_figure(fig)
+    if not out.data:
+        return out
+
+    y_labels = list(out.data[0].y) if out.data[0].y is not None else []
+    n_bars = max(len(y_labels), 1)
+    max_len = max((len(str(y)) for y in y_labels), default=12)
+    left_margin = int(max(140, min(340, 9 * max_len + 48)))
+    top_m = int(out.layout.margin.t or 50)
+    bottom_m = int(out.layout.margin.b or 48)
+    export_w = max(1000, left_margin + 520)
+    export_h = max(int(out.layout.height or 300), 44 * n_bars + top_m + bottom_m)
+
+    out.update_layout(
+        width=export_w,
+        height=export_h,
+        margin=dict(l=left_margin, r=72, t=top_m, b=bottom_m),
+    )
+    return out
+
+
+def _chart_image(
+    fig: go.Figure,
+    doc: SimpleDocTemplate,
+    *,
+    width_px: int = 1000,
+    height_px: int = 500,
+    max_width: float | None = None,
+    max_height: float | None = None,
+) -> Image:
+    """PDF kép – oldalarány megőrzése (ne nyújtsa szét vízszintesen)."""
+    max_width = max_width or doc.width
+    max_height = max_height or 13 * cm
+    ratio = height_px / max(width_px, 1)
+    img_w = min(24 * cm, max_width)
+    img_h = img_w * ratio
+    if img_h > max_height:
+        img_h = max_height
+        img_w = img_h / ratio
+    return Image(_fig_to_image(fig, width_px, height_px), width=img_w, height=img_h)
 
 
 def _section_title(text: str, styles: Any, font_name: str) -> Paragraph:
@@ -207,6 +375,7 @@ def build_report_pdf(
     """
     compare_filename = comparison[0] if comparison else None
     compare_bytes = comparison[1] if comparison else None
+    _ensure_kaleido_ready()
     font_name = _register_font()
     styles = getSampleStyleSheet()
     page_size = landscape(A4)
@@ -275,7 +444,7 @@ def build_report_pdf(
             "jegyzet": "Jegyzet",
         }
         ev_df = ev_df.rename(columns={k: v for k, v in rename.items() if k in ev_df.columns})
-        story.append(_df_to_table(ev_df, font_name))
+        story.append(_df_to_table(ev_df, font_name, page_width=doc.width))
         story.append(PageBreak())
 
         summaries = summarize_all(events)
@@ -285,79 +454,121 @@ def build_report_pdf(
         for dim, fig in charts.items():
             if fig is None:
                 continue
-            story.append(
-                _body(f"<b>{DIMENSION_TITLES.get(dim, dim)}</b>", styles, font_name)
+            fig_pdf = _prepare_horizontal_bar_for_pdf(fig)
+            h_px = int(fig_pdf.layout.height or max(400, 44 * len(fig.data)))
+            w_px = int(fig_pdf.layout.width or 1000)
+            _add_block(
+                story,
+                [
+                    _body(f"<b>{DIMENSION_TITLES.get(dim, dim)}</b>", styles, font_name),
+                    _chart_image(
+                        fig_pdf,
+                        doc,
+                        width_px=w_px,
+                        height_px=h_px,
+                        max_width=22 * cm,
+                        max_height=12 * cm,
+                    ),
+                ],
             )
-            img = _fig_to_image(fig, width=1000, height=max(400, 44 * len(fig.data)))
-            story.append(Image(img, width=24 * cm, height=12 * cm))
-            story.append(Spacer(1, 0.4 * cm))
+            story.append(Spacer(1, 0.35 * cm))
 
         radar = funkcio_radar_chart(summaries.get("funkcio", pd.DataFrame()), categories)
         if radar is not None:
-            story.append(_body("<b>Funkci\u00f3 \u2013 radar diagram</b>", styles, font_name))
-            story.append(Image(_fig_to_image(radar, 700, 520), width=18 * cm, height=13 * cm))
-            story.append(Spacer(1, 0.4 * cm))
+            _add_block(
+                story,
+                [
+                    _body("<b>Funkci\u00f3 \u2013 radar diagram</b>", styles, font_name),
+                    _chart_image(
+                        radar,
+                        doc,
+                        width_px=900,
+                        height_px=560,
+                        max_width=22 * cm,
+                        max_height=14 * cm,
+                    ),
+                ],
+            )
+            story.append(Spacer(1, 0.35 * cm))
 
         ctx_fn = crosstab_kontextus_funkcio(events)
         ctx_matrix = kontextus_funkcio_matrix(ctx_fn, categories)
         if not ctx_matrix.empty and ctx_matrix.sum().sum() > 0:
             story.append(PageBreak())
-            story.append(
-                _section_title(
-                    "Kontextus szerinti kommunik\u00e1ci\u00f3 \u2013 funkci\u00f3k",
-                    styles,
-                    font_name,
-                )
-            )
-            story.append(
-                _body(
-                    "T\u00e1bl\u00e1zat (sor = kontextus, oszlop = funkci\u00f3, cella = esem\u00e9nysz\u00e1m)",
-                    styles,
-                    font_name,
-                )
-            )
             mtx = ctx_matrix.reset_index().rename(columns={"kontextus": "Kontextus"})
-            story.append(_df_to_table(mtx, font_name))
+            _add_block(
+                story,
+                [
+                    _section_title(
+                        "Kontextus szerinti kommunik\u00e1ci\u00f3 \u2013 funkci\u00f3k",
+                        styles,
+                        font_name,
+                    ),
+                    _body(
+                        "T\u00e1bl\u00e1zat (sor = kontextus, oszlop = funkci\u00f3, cella = esem\u00e9nysz\u00e1m)",
+                        styles,
+                        font_name,
+                    ),
+                    _df_to_table(mtx, font_name, page_width=doc.width),
+                ],
+            )
 
             heatmap = kontextus_funkcio_heatmap(ctx_matrix)
             if heatmap is not None:
-                story.append(Spacer(1, 0.3 * cm))
-                story.append(_body("<b>H\u0151t\u00e9rk\u00e9p</b>", styles, font_name))
-                h = max(320, 48 * len(ctx_matrix.index) + 120)
-                w = max(600, 72 * len(ctx_matrix.columns) + 160)
-                story.append(
-                    Image(_fig_to_image(heatmap, w, h), width=24 * cm, height=14 * cm)
+                story.append(Spacer(1, 0.25 * cm))
+                heatmap_pdf = _prepare_heatmap_for_pdf(heatmap)
+                h_px = int(heatmap_pdf.layout.height or 400)
+                w_px = int(heatmap_pdf.layout.width or 1000)
+                _add_block(
+                    story,
+                    [
+                        _body("<b>H\u0151t\u00e9rk\u00e9p</b>", styles, font_name),
+                        _chart_image(
+                            heatmap_pdf,
+                            doc,
+                            width_px=w_px,
+                            height_px=h_px,
+                            max_width=doc.width,
+                            max_height=16 * cm,
+                        ),
+                    ],
                 )
 
             grouped = kontextus_funkcio_grouped_bar(ctx_fn, categories)
             if grouped is not None:
-                story.append(Spacer(1, 0.3 * cm))
-                story.append(
-                    _body("<b>Csoportos\u00edtott oszlopdiagram</b>", styles, font_name)
-                )
-                story.append(
-                    Image(_fig_to_image(grouped, 1100, 520), width=24 * cm, height=12 * cm)
+                story.append(Spacer(1, 0.25 * cm))
+                _add_block(
+                    story,
+                    [
+                        _body("<b>Csoportos\u00edtott oszlopdiagram</b>", styles, font_name),
+                        _chart_image(
+                            grouped,
+                            doc,
+                            width_px=1100,
+                            height_px=520,
+                            max_height=12 * cm,
+                        ),
+                    ],
                 )
 
         szerep_stats = summarize_kezdemenyezes_vs_valaszadas(events)
         if szerep_stats is not None:
-            story.append(Spacer(1, 0.3 * cm))
-            story.append(
-                _section_title("Kezdem\u00e9nyez\u00e9s vs v\u00e1laszad\u00e1s", styles, font_name)
-            )
-            story.append(
-                _body(
-                    _szerep_stats_text(szerep_stats),
-                    styles,
-                    font_name,
-                )
-            )
-            story.append(
-                Image(
-                    _fig_to_image(kezdemenyezes_valaszadas_100_bar(szerep_stats), 900, 280),
-                    width=22 * cm,
-                    height=7 * cm,
-                )
+            story.append(Spacer(1, 0.25 * cm))
+            szerep_fig = kezdemenyezes_valaszadas_100_bar(szerep_stats)
+            _add_block(
+                story,
+                [
+                    _section_title("Kezdem\u00e9nyez\u00e9s vs v\u00e1laszad\u00e1s", styles, font_name),
+                    _body(_szerep_stats_text(szerep_stats), styles, font_name),
+                    _chart_image(
+                        szerep_fig,
+                        doc,
+                        width_px=900,
+                        height_px=280,
+                        max_width=22 * cm,
+                        max_height=7 * cm,
+                    ),
+                ],
             )
 
         story.append(PageBreak())
@@ -365,14 +576,17 @@ def build_report_pdf(
         for dim, table in summaries.items():
             if table.empty:
                 continue
-            story.append(
-                _body(f"<b>{DIMENSION_TITLES.get(dim, dim)}</b>", styles, font_name)
-            )
             tbl = table.rename(
                 columns={"kod": "K\u00f3d", "cimke": "C\u00edmke", "darab": "Darab"}
             )
-            story.append(_df_to_table(tbl, font_name))
-            story.append(Spacer(1, 0.25 * cm))
+            _add_block(
+                story,
+                [
+                    _body(f"<b>{DIMENSION_TITLES.get(dim, dim)}</b>", styles, font_name),
+                    _df_to_table(tbl, font_name, page_width=doc.width),
+                ],
+            )
+            story.append(Spacer(1, 0.2 * cm))
 
         if compare_bytes and compare_filename:
             _append_comparison_to_story(
@@ -385,6 +599,7 @@ def build_report_pdf(
                 current_filename=source_filename,
                 styles=styles,
                 font_name=font_name,
+                doc=doc,
             )
 
     doc.build(story)
@@ -403,6 +618,7 @@ def _append_comparison_to_story(
     current_filename: str,
     styles: Any,
     font_name: str,
+    doc: SimpleDocTemplate,
 ) -> None:
     try:
         prev_survey = parse_bytes(compare_bytes, filename=compare_filename)
@@ -432,23 +648,21 @@ def _append_comparison_to_story(
     previous_label = _stem_label(compare_filename, "Kor\u00e1bbi")
 
     story.append(PageBreak())
-    story.append(
+    intro_blocks: list[Any] = [
         _section_title(
             "\u00d6sszehasonl\u00edt\u00e1s kor\u00e1bbi felm\u00e9r\u00e9ssel",
             styles,
             font_name,
-        )
-    )
-    story.append(
+        ),
         _body(
             f"<b>Aktu\u00e1lis:</b> {current_filename}<br/>"
             f"<b>Kor\u00e1bbi:</b> {compare_filename}",
             styles,
             font_name,
-        )
-    )
+        ),
+    ]
     for warning in validate_event_codes(prev_survey.events, categories):
-        story.append(
+        intro_blocks.append(
             _body(f"<i>Kor\u00e1bbi felm\u00e9r\u00e9s: {warning}</i>", styles, font_name)
         )
 
@@ -460,40 +674,50 @@ def _append_comparison_to_story(
         previous_label=previous_label,
     )
     if comparison is not None:
-        story.append(_body("<b>Funkci\u00f3 \u2013 radar \u00f6sszehasonl\u00edt\u00e1s</b>", styles, font_name))
-        story.append(
-            Image(
-                _fig_to_image(comparison, 900, 560),
-                width=22 * cm,
-                height=14 * cm,
-            )
+        intro_blocks.extend(
+            [
+                _body("<b>Funkci\u00f3 \u2013 radar \u00f6sszehasonl\u00edt\u00e1s</b>", styles, font_name),
+                _chart_image(
+                    comparison,
+                    doc,
+                    width_px=900,
+                    height_px=560,
+                    max_width=22 * cm,
+                    max_height=14 * cm,
+                ),
+            ]
         )
-        story.append(Spacer(1, 0.3 * cm))
+    _add_block(story, intro_blocks)
+    story.append(Spacer(1, 0.25 * cm))
 
-    story.append(_body("<b>\u00d6sszes\u00edtett interakci\u00f3k</b>", styles, font_name))
-    story.append(
-        _body(
-            f"<b>{previous_label}:</b> {n_prev} esem\u00e9ny<br/>"
-            f"<b>{current_label}:</b> {n_curr} esem\u00e9ny<br/>"
-            f"<b>V\u00e1ltoz\u00e1s:</b> {n_curr - n_prev:+d}",
-            styles,
-            font_name,
-        )
-    )
     totals_fig = interaction_totals_comparison_chart(
         n_prev,
         n_curr,
         previous_label=previous_label,
         current_label=current_label,
     )
-    story.append(
-        Image(
-            _fig_to_image(totals_fig, 900, 320),
-            width=22 * cm,
-            height=8 * cm,
-        )
+    _add_block(
+        story,
+        [
+            _body("<b>\u00d6sszes\u00edtett interakci\u00f3k</b>", styles, font_name),
+            _body(
+                f"<b>{previous_label}:</b> {n_prev} esem\u00e9ny<br/>"
+                f"<b>{current_label}:</b> {n_curr} esem\u00e9ny<br/>"
+                f"<b>V\u00e1ltoz\u00e1s:</b> {n_curr - n_prev:+d}",
+                styles,
+                font_name,
+            ),
+            _chart_image(
+                totals_fig,
+                doc,
+                width_px=900,
+                height_px=320,
+                max_width=22 * cm,
+                max_height=8 * cm,
+            ),
+        ],
     )
-    story.append(Spacer(1, 0.3 * cm))
+    story.append(Spacer(1, 0.25 * cm))
 
     ctx_change = kontextus_funkcio_change_matrix(events, prev_events, categories)
     change_heatmap = kontextus_funkcio_change_heatmap(
@@ -502,32 +726,30 @@ def _append_comparison_to_story(
         previous_label=previous_label,
     )
     if change_heatmap is not None:
-        story.append(
-            _body("<b>Kontextus \u00d7 funkci\u00f3 \u2013 v\u00e1ltoz\u00e1s</b>", styles, font_name)
+        change_pdf = _prepare_heatmap_for_pdf(change_heatmap)
+        h_px = int(change_pdf.layout.height or 400)
+        w_px = int(change_pdf.layout.width or 1000)
+        _add_block(
+            story,
+            [
+                _body("<b>Kontextus \u00d7 funkci\u00f3 \u2013 v\u00e1ltoz\u00e1s</b>", styles, font_name),
+                _body(
+                    "Cella = aktu\u00e1lis \u2212 kor\u00e1bbi esem\u00e9nysz\u00e1m.",
+                    styles,
+                    font_name,
+                ),
+                _chart_image(
+                    change_pdf,
+                    doc,
+                    width_px=w_px,
+                    height_px=h_px,
+                    max_width=doc.width,
+                    max_height=16 * cm,
+                ),
+            ],
         )
-        story.append(
-            _body(
-                "Cella = aktu\u00e1lis \u2212 kor\u00e1bbi esem\u00e9nysz\u00e1m.",
-                styles,
-                font_name,
-            )
-        )
-        ch_rows = len(ctx_change.index)
-        ch_cols = len(ctx_change.columns)
-        h = max(320, 48 * ch_rows + 120)
-        w = max(600, 72 * ch_cols + 160)
-        story.append(
-            Image(
-                _fig_to_image(change_heatmap, w, h),
-                width=24 * cm,
-                height=14 * cm,
-            )
-        )
-        story.append(Spacer(1, 0.3 * cm))
+        story.append(Spacer(1, 0.25 * cm))
 
-    story.append(
-        _body("<b>Dimenzi\u00f3nk\u00e9nti el\u0151tte \u2013 ut\u00e1na</b>", styles, font_name)
-    )
     before_after = charts_dimension_before_after(
         summaries,
         prev_summaries,
@@ -535,34 +757,36 @@ def _append_comparison_to_story(
         previous_label=previous_label,
         current_label=current_label,
     )
+    ba_header_done = False
     for dim in DIMENSIONS:
         fig = before_after.get(dim)
         if fig is None:
             continue
-        story.append(
-            _body(f"<b>{DIMENSION_TITLES.get(dim, dim)}</b>", styles, font_name)
-        )
-        h = _fig_layout_height(fig, 400)
-        img_h = 14 * cm if h > 420 else 12 * cm
-        story.append(
-            Image(
-                _fig_to_image(fig, 1000, h),
-                width=24 * cm,
-                height=img_h,
+        fig_pdf = _prepare_horizontal_bar_for_pdf(fig)
+        h_px = int(fig_pdf.layout.height or _fig_layout_height(fig, 400))
+        w_px = int(fig_pdf.layout.width or 1000)
+        block: list[Any] = []
+        if not ba_header_done:
+            block.append(
+                _body("<b>Dimenzi\u00f3nk\u00e9nti el\u0151tte \u2013 ut\u00e1na</b>", styles, font_name)
             )
+            ba_header_done = True
+        block.extend(
+            [
+                _body(f"<b>{DIMENSION_TITLES.get(dim, dim)}</b>", styles, font_name),
+                _chart_image(
+                    fig_pdf,
+                    doc,
+                    width_px=w_px,
+                    height_px=h_px,
+                    max_width=22 * cm,
+                    max_height=14 * cm if h_px > 420 else 12 * cm,
+                ),
+            ]
         )
-        story.append(Spacer(1, 0.25 * cm))
+        _add_block(story, block)
+        story.append(Spacer(1, 0.2 * cm))
 
-    story.append(
-        _body("<b>Dimenzi\u00f3nk\u00e9nti k\u00fcl\u00f6nbs\u00e9g (delta)</b>", styles, font_name)
-    )
-    story.append(
-        _body(
-            "Csak a v\u00e1ltoz\u00e1s: aktu\u00e1lis \u2212 kor\u00e1bbi esem\u00e9nysz\u00e1m.",
-            styles,
-            font_name,
-        )
-    )
     delta_charts = charts_dimension_delta(
         summaries,
         prev_summaries,
@@ -570,23 +794,46 @@ def _append_comparison_to_story(
         previous_label=previous_label,
         current_label=current_label,
     )
+    delta_header_done = False
     for dim in DIMENSIONS:
         fig = delta_charts.get(dim)
         if fig is None:
             continue
-        story.append(
-            _body(f"<b>{DIMENSION_TITLES.get(dim, dim)}</b>", styles, font_name)
-        )
-        h = _fig_layout_height(fig, 360)
-        img_h = 12 * cm if h <= 400 else 13 * cm
-        story.append(
-            Image(
-                _fig_to_image(fig, 1000, h),
-                width=24 * cm,
-                height=img_h,
+        fig_pdf = _prepare_horizontal_bar_for_pdf(fig)
+        h_px = int(fig_pdf.layout.height or _fig_layout_height(fig, 360))
+        w_px = int(fig_pdf.layout.width or 1000)
+        block = []
+        if not delta_header_done:
+            block.extend(
+                [
+                    _body(
+                        "<b>Dimenzi\u00f3nk\u00e9nti k\u00fcl\u00f6nbs\u00e9g (delta)</b>",
+                        styles,
+                        font_name,
+                    ),
+                    _body(
+                        "Csak a v\u00e1ltoz\u00e1s: aktu\u00e1lis \u2212 kor\u00e1bbi esem\u00e9nysz\u00e1m.",
+                        styles,
+                        font_name,
+                    ),
+                ]
             )
+            delta_header_done = True
+        block.extend(
+            [
+                _body(f"<b>{DIMENSION_TITLES.get(dim, dim)}</b>", styles, font_name),
+                _chart_image(
+                    fig_pdf,
+                    doc,
+                    width_px=w_px,
+                    height_px=h_px,
+                    max_width=22 * cm,
+                    max_height=13 * cm if h_px > 400 else 12 * cm,
+                ),
+            ]
         )
-        story.append(Spacer(1, 0.25 * cm))
+        _add_block(story, block)
+        story.append(Spacer(1, 0.2 * cm))
 
 
 def _szerep_stats_text(stats: KezdemenyezesValaszadasStats) -> str:

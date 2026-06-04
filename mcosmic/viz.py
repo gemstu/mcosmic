@@ -23,6 +23,8 @@ def bar_chart(summary: pd.DataFrame, title: str) -> go.Figure | None:
         lambda r: f"{r['cimke']} ({r['kod']})" if r["cimke"] else str(r["kod"]),
         axis=1,
     )
+    palette = qualitative.Plotly
+    bar_colors = [palette[i % len(palette)] for i in range(len(summary))]
     fig = go.Figure(
         go.Bar(
             x=summary["darab"],
@@ -30,6 +32,7 @@ def bar_chart(summary: pd.DataFrame, title: str) -> go.Figure | None:
             orientation="h",
             text=summary["darab"],
             textposition="outside",
+            marker_color=bar_colors,
         )
     )
     fig.update_layout(
@@ -85,7 +88,44 @@ def _radar_polar_layout(max_val: int) -> dict:
             tick0=0,
             dtick=1 if max_val <= 10 else None,
         ),
+        angularaxis=dict(direction="clockwise"),
     )
+
+
+def _apply_radar_layout(
+    fig: go.Figure,
+    max_val: int,
+    title: str,
+    *,
+    show_legend: bool = False,
+) -> None:
+    """Kozos radar/pok elrendezes (PDF-ben es weblapon is olvashato feliratok)."""
+    if show_legend:
+        margin = dict(t=72, b=40, l=80, r=80)
+    else:
+        margin = dict(t=72, b=100, l=110, r=110)
+    layout: dict = dict(
+        title=dict(
+            text=title,
+            x=0.5,
+            xanchor="center",
+            pad=dict(t=8, b=16),
+        ),
+        polar=_radar_polar_layout(max_val),
+        height=560,
+        width=900,
+        margin=margin,
+        showlegend=show_legend,
+    )
+    if show_legend:
+        layout["legend"] = dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.12,
+            x=0.5,
+            xanchor="center",
+        )
+    fig.update_layout(**layout)
 
 
 def _add_radar_trace(
@@ -133,12 +173,11 @@ def funkcio_radar_chart(
         fill_color="rgba(31, 119, 180, 0.35)",
     )
     max_val = max(values) if values else 1
-    fig.update_layout(
-        title="Funkci\u00f3 \u2013 radar diagram (p\u00f3kdiagram)",
-        polar=_radar_polar_layout(max_val),
-        height=520,
-        margin=dict(t=60, b=40, l=80, r=80),
-        showlegend=False,
+    _apply_radar_layout(
+        fig,
+        max_val,
+        "Funkci\u00f3 \u2013 radar diagram (p\u00f3kdiagram)",
+        show_legend=False,
     )
     return fig
 
@@ -204,13 +243,11 @@ def funkcio_radar_comparison_chart(
         )
 
     max_val = max(max(cur_values), max(prev_values), 1)
-    fig.update_layout(
-        title="Funkci\u00f3 \u2013 radar \u00f6sszehasonl\u00edt\u00e1s (aktu\u00e1lis vs kor\u00e1bbi)",
-        polar=_radar_polar_layout(max_val),
-        height=560,
-        margin=dict(t=60, b=40, l=80, r=80),
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=-0.12, x=0.5, xanchor="center"),
+    _apply_radar_layout(
+        fig,
+        max_val,
+        "Funkci\u00f3 \u2013 radar \u00f6sszehasonl\u00edt\u00e1s (aktu\u00e1lis vs kor\u00e1bbi)",
+        show_legend=True,
     )
     return fig
 
@@ -589,6 +626,37 @@ def kontextus_funkcio_grouped_bar(
     return fig
 
 
+def _heatmap_figure_layout(matrix: pd.DataFrame, *, title: str) -> dict:
+    """Hoterkep margok: hosszu funkciok (x, -35 fok) ne vagodjanak le."""
+    n_rows = len(matrix.index)
+    n_cols = len(matrix.columns)
+    max_x_len = max((len(str(c)) for c in matrix.columns), default=8)
+    max_y_len = max((len(str(i)) for i in matrix.index), default=8)
+    bottom = int(max(200, min(360, 110 + 9 * max_x_len)))
+    left = int(max(180, min(300, 120 + 6 * max_y_len)))
+    right = 110
+    top = 72
+    width = max(950, 54 * n_cols + left + right)
+    height = max(360, 52 * n_rows + top + bottom)
+    return dict(
+        title=dict(
+            text=title,
+            x=0.5,
+            xanchor="center",
+            pad=dict(t=8, b=12),
+        ),
+        xaxis=dict(
+            title="Funkci\u00f3",
+            tickangle=-35,
+            automargin=True,
+        ),
+        yaxis=dict(title="Kontextus", autorange="reversed", automargin=True),
+        height=height,
+        width=width,
+        margin=dict(t=top, b=bottom, l=left, r=right),
+    )
+
+
 def kontextus_funkcio_heatmap(matrix: pd.DataFrame) -> go.Figure | None:
     """Hoterkep: kontextus (y) x funkcio (x), ertekek = esemenyszam."""
     if matrix.empty or matrix.sum().sum() == 0:
@@ -612,20 +680,11 @@ def kontextus_funkcio_heatmap(matrix: pd.DataFrame) -> go.Figure | None:
             ),
         )
     )
-    n_rows = len(matrix.index)
-    n_cols = len(matrix.columns)
     fig.update_layout(
-        title=dict(
-            text="Kontextus szerinti kommunik\u00e1ci\u00f3 \u2013 funkci\u00f3k (h\u0151t\u00e9rk\u00e9p)",
-            x=0.5,
-            xanchor="center",
-            pad=dict(t=8, b=12),
-        ),
-        xaxis=dict(title="Funkci\u00f3", tickangle=-35),
-        yaxis=dict(title="Kontextus", autorange="reversed"),
-        height=max(320, 48 * n_rows + 120),
-        width=max(600, 72 * n_cols + 160),
-        margin=dict(t=64, b=120, l=140, r=40),
+        **_heatmap_figure_layout(
+            matrix,
+            title="Kontextus szerinti kommunik\u00e1ci\u00f3 \u2013 funkci\u00f3k (h\u0151t\u00e9rk\u00e9p)",
+        )
     )
     return fig
 
@@ -672,23 +731,14 @@ def kontextus_funkcio_change_heatmap(
             ),
         )
     )
-    n_rows = len(change_matrix.index)
-    n_cols = len(change_matrix.columns)
     fig.update_layout(
-        title=dict(
-            text=(
+        **_heatmap_figure_layout(
+            change_matrix,
+            title=(
                 "Kontextus \u00d7 funkci\u00f3 \u2013 v\u00e1ltoz\u00e1s "
                 f"({current_label} \u2212 {previous_label})"
             ),
-            x=0.5,
-            xanchor="center",
-            pad=dict(t=8, b=12),
-        ),
-        xaxis=dict(title="Funkci\u00f3", tickangle=-35),
-        yaxis=dict(title="Kontextus", autorange="reversed"),
-        height=max(320, 48 * n_rows + 120),
-        width=max(600, 72 * n_cols + 160),
-        margin=dict(t=64, b=120, l=140, r=40),
+        )
     )
     return fig
 

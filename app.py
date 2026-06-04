@@ -327,8 +327,8 @@ def _render_pdf_download(
     except Exception as exc:
         st.error(f"A PDF k\u00e9sz\u00edt\u00e9se sikertelen: {exc}")
         st.caption(
-            "PDF diagramok: pip install kaleido==0.2.1 reportlab "
-            "(Streamlit Cloud-on a requirements.txt-ben szerepel)."
+            "PDF-hez aktivald a .venv-et, majd: pip install -r requirements.txt "
+            "(kaleido==0.2.1). Utana inditsd ujra: streamlit run app.py"
         )
         return
 
